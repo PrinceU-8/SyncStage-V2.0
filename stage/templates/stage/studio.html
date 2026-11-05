@@ -1,0 +1,612 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ initial_project_data.title|default:"SyncStage - Stage Rehearsal & Chord Visualizer" }}</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+  <!-- Modular Stylesheet -->
+  <link rel="stylesheet" href="{% static 'css/studio.css' %}">
+</head>
+<body class="min-h-screen flex flex-col bg-zinc-950 text-zinc-100 antialiased overflow-x-hidden">
+
+  <!-- Django CSRF Token -->
+  <div class="hidden">{% csrf_token %}</div>
+
+  <!-- TOP APP BAR -->
+  <header id="main-header" class="border-b border-zinc-800 bg-zinc-900/90 backdrop-blur sticky top-0 z-30 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 transition-all duration-200">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-amber-400 text-black flex items-center justify-center font-black text-lg shadow-lg shadow-amber-400/20">
+        <i class="ph-bold ph-waveform"></i>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-wider text-white uppercase flex items-center gap-2">
+          SyncStage <span class="text-[10px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.5 rounded font-mono">STAGE-PRO</span>
+        </h1>
+        <p class="text-[11px] text-zinc-400">Zero-Latency Click, Dual-Deck Sweeper & Chart Engine</p>
+      </div>
+    </div>
+
+    <!-- Mode & Action buttons -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <!-- Medley / Multi-Song Mode Toggle -->
+      <label class="cursor-pointer bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition select-none">
+        <input type="checkbox" id="toggle-medley-mode" class="accent-amber-400 w-3.5 h-3.5 cursor-pointer">
+        <span class="font-semibold text-amber-300 flex items-center gap-1"><i class="ph-bold ph-music-notes-plus"></i> Multi-Song Medley</span>
+      </label>
+
+      <!-- OSU File Import -->
+      <label class="cursor-pointer bg-red-600/90 hover:bg-red-500 text-white font-semibold text-xs px-3 py-1.5 rounded-md border border-red-500 flex items-center gap-1.5 shadow transition">
+        <i class="ph-bold ph-file-text text-sm"></i>
+        <span id="osu-filename-lbl">Import .osu</span>
+        <input type="file" id="osu-file-input" accept=".osu,text/plain" class="hidden">
+      </label>
+
+      <!-- Paste .osu modal trigger -->
+      <button id="btn-paste-osu-modal" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1 transition" title="Paste raw .osu text">
+        <i class="ph ph-clipboard-text"></i>
+        <span>Paste .osu</span>
+      </button>
+
+      <!-- Audio file upload -->
+      <div class="flex items-center gap-1">
+        <label class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition">
+          <i id="audio-status-icon" class="ph ph-upload-simple text-sm text-amber-400"></i>
+          <span id="audio-filename-lbl">Load Audio</span>
+          <input type="file" id="audio-file-input" accept="audio/*" class="hidden">
+        </label>
+        <button id="btn-clear-audio" class="hidden text-zinc-500 hover:text-red-400 p-1.5 rounded bg-zinc-900 border border-zinc-800 transition text-xs" title="Remove cached audio">
+          <i class="ph-bold ph-trash"></i>
+        </button>
+      </div>
+
+      <!-- Video / Presentation Stage Mode -->
+      <button id="btn-video-mode" class="bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs px-3.5 py-1.5 rounded-md flex items-center gap-1.5 shadow transition">
+        <i class="ph-bold ph-arrows-out-simple text-sm"></i>
+        <span>Full Stage View</span>
+      </button>
+
+      <!-- Save to Database -->
+      <button id="btn-save-project" type="button" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Save to Database">
+        <i class="ph-bold ph-floppy-disk text-amber-400"></i>
+        <span>Save</span>
+      </button>
+
+      <!-- Export Project (.json) -->
+      <button id="btn-export-project" type="button" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Export project file (.json)">
+        <i class="ph-bold ph-download-simple text-amber-400"></i>
+        <span>Export</span>
+      </button>
+
+      <!-- Import from File (.json) -->
+      <label class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Import .json file">
+        <i class="ph-bold ph-upload-simple text-sky-400"></i>
+        <span>Import</span>
+        <input type="file" id="project-file-input" accept=".json,application/json" class="hidden">
+      </label>
+
+      <!-- Open Project Library -->
+      <button id="btn-open-library" type="button" class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Open saved songs">
+        <i class="ph-bold ph-folder-open text-sky-400"></i>
+        <span>Open</span>
+      </button>
+
+      <!-- Visualizer Settings -->
+      <button id="btn-open-settings-modal" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Look-Ahead, Visualizer & Spectrum Settings">
+        <i class="ph-bold ph-gear text-amber-400"></i>
+        <span>Settings</span>
+      </button>
+    </div>
+
+  </header>
+
+  <!-- MAIN APPLICATION CONTAINER -->
+  <div class="flex-1 flex flex-col xl:flex-row overflow-hidden min-h-0 relative">
+
+    <!-- LEFT: VISUALIZER STAGE & CONTROLS -->
+    <main id="main-stage-col" class="flex-1 flex flex-col p-3 md:p-5 bg-zinc-950 overflow-y-auto min-h-0 transition-all duration-200">
+
+      <!-- STAGE CONTAINER -->
+      <div id="visualizer-wrapper" class="relative w-full aspect-[16/9] max-w-5xl mx-auto rounded-xl overflow-hidden screen-canvas-container border border-zinc-800 flex flex-col justify-between p-5 select-none transition-all duration-200">
+        
+        <!-- EXIT & FLOATING CONTROLS (Stage Mode) -->
+        <div id="video-mode-controls" class="hidden absolute top-4 right-5 z-50 flex items-center gap-2">
+          <button id="btn-stage-editor" class="bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded-full backdrop-blur transition flex items-center gap-1.5 shadow-lg">
+            <i class="ph-bold ph-sliders text-amber-400"></i>
+            <span id="stage-editor-text">Edit Drawer</span>
+          </button>
+          <button id="btn-stage-play" class="bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700 text-amber-400 text-xs px-3 py-1.5 rounded-full backdrop-blur transition flex items-center gap-1.5 shadow-lg">
+            <i id="stage-play-icon" class="ph-fill ph-play text-sm"></i>
+            <span id="stage-play-text">Play</span>
+          </button>
+          <button id="btn-exit-video" class="bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded-full backdrop-blur transition flex items-center gap-1.5 shadow-lg">
+            <i class="ph ph-arrows-in-simple text-amber-400"></i> Exit Fullscreen [Esc]
+          </button>
+        </div>
+
+        <!-- TOP-LEFT SONG & SECTION INFO OVERLAY -->
+        <div class="z-10 font-mono-header text-white leading-snug tracking-tight">
+          <div class="flex items-center gap-2.5 flex-wrap">
+            <div id="vis-title" class="text-xl md:text-2xl font-extrabold uppercase tracking-wider text-white">
+              {{ initial_project_data.title|default:"UNTITLED PROJECT" }}
+            </div>
+            <span id="vis-section-badge" class="px-2 py-0.5 rounded text-xs font-bold tracking-wider uppercase bg-amber-400 text-black shadow-md shadow-amber-400/30">
+              {{ initial_project_data.sections.0.name|default:"SECTION 1"|upper }}
+            </span>
+          </div>
+          <div class="text-sm md:text-base font-semibold text-zinc-200 mt-1 flex flex-wrap gap-x-2">
+            <span>BPM: <span id="vis-bpm" class="text-amber-300 font-bold">{{ initial_project_data.bpm|default:120|floatformat:0 }}</span></span>
+            <span class="text-zinc-600">|</span>
+            <span>Time Sig: <span id="vis-timesig" class="text-white">{{ initial_project_data.beatsPerBar|default:4 }}/4</span></span>
+            <span class="text-zinc-600">|</span>
+            <span>Bar: <span id="vis-bar-num" class="text-amber-400">1 / {{ initial_project_data.totalMeasures|default:8 }}</span></span>
+          </div>
+          <div class="text-sm md:text-base font-semibold text-zinc-300">
+            Key: <span id="vis-key" class="text-white font-bold">{{ initial_project_data.key|default:"C" }}</span>
+          </div>
+        </div>
+
+        <!-- MAIN DUAL-DECK & SPECTRUM CANVAS -->
+        <div class="relative w-full my-auto flex-1 flex flex-col justify-center py-2">
+          <div id="sweeper-frame-container" class="relative w-full h-72 flex flex-col justify-between">
+            <canvas id="stage-canvas" class="w-full h-full block z-0"></canvas>
+          </div>
+        </div>
+
+        <!-- BOTTOM: 4-BAR ROLLING OVERVIEW TIMELINE -->
+        <div class="z-10 w-full pt-2 border-t border-zinc-900">
+          <div class="text-[10px] font-mono tracking-wider text-zinc-400 uppercase mb-1.5 flex justify-between items-center">
+            <span class="flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              4-Bar Rolling Overview
+            </span>
+            <span id="timeline-time-display" class="text-amber-400 font-mono font-bold">00:00.00 / 00:16.00</span>
+          </div>
+          <div id="overview-bar-container" class="grid grid-cols-4 gap-2 w-full h-14 bg-zinc-950"></div>
+        </div>
+
+      </div>
+
+      <!-- PLAYBACK & TRANSPORT CONTROLS -->
+      <div id="transport-controls-card" class="max-w-5xl mx-auto w-full mt-4 bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 flex flex-col gap-3 transition-all duration-200">
+        
+        <!-- Scrubber Progress Bar with Embedded Segment Markers -->
+        <div class="flex items-center gap-3">
+          <span id="scrub-current" class="text-xs font-mono text-zinc-400 w-12 text-right">00:00</span>
+          <div class="relative flex-1 flex flex-col justify-center py-1.5" id="timeline-interactive-wrapper">
+            <div id="timeline-markers-track" class="relative w-full h-3 rounded-full overflow-hidden bg-zinc-800 flex items-stretch border border-zinc-700/60 cursor-pointer"></div>
+
+            <!-- Overlaid invisible scrubber range -->
+            <input id="timeline-scrubber" type="range" min="0" max="100" step="0.05" value="0" class="absolute inset-0 w-full opacity-0 cursor-pointer z-20">
+
+            <!-- Needle -->
+            <div id="timeline-needle" class="absolute top-1/2 -translate-y-1/2 w-1.5 h-5 bg-amber-400 rounded-full shadow-lg shadow-amber-400/80 pointer-events-none z-30" style="left: 0%;"></div>
+
+            <!-- Floating Hover Tooltip -->
+            <div id="timeline-hover-tooltip" class="hidden absolute -top-8 -translate-x-1/2 z-40 bg-zinc-900/95 border border-zinc-700 text-zinc-100 text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-xl pointer-events-none whitespace-nowrap">
+              <span id="tooltip-text">SECTION 1 • Bar 1 (00:00)</span>
+            </div>
+          </div>
+          <span id="scrub-total" class="text-xs font-mono text-zinc-400 w-12">00:16</span>
+        </div>
+
+        <!-- Buttons & Audio Sliders Row -->
+        <div class="flex flex-wrap items-center justify-between gap-2.5">
+          <div class="flex items-center gap-2">
+            <button id="btn-prev-bar" title="Previous Bar" class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition">
+              <i class="ph-bold ph-skip-back text-sm"></i>
+            </button>
+            <button id="btn-play" class="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-black font-bold flex items-center gap-2 shadow-lg shadow-amber-400/20 transition">
+              <i id="btn-play-icon" class="ph-fill ph-play text-base"></i>
+              <span id="btn-play-text">PLAY</span>
+            </button>
+            <button id="btn-stop" class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition" title="Stop & Reset">
+              <i class="ph-bold ph-stop text-sm"></i>
+            </button>
+            <button id="btn-next-bar" title="Next Bar" class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition">
+              <i class="ph-bold ph-skip-forward text-sm"></i>
+            </button>
+            <button id="btn-loop-bar" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-zinc-700 flex items-center gap-1.5 transition">
+              <i class="ph-bold ph-repeat text-sm"></i>
+              <span id="loop-state-text">Loop Bar: OFF</span>
+            </button>
+          </div>
+
+          <!-- Dual Volume Pipeline Controls -->
+          <div class="flex items-center gap-3 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-800 flex-wrap">
+            <div class="flex items-center gap-1.5" title="Audio Track Volume">
+              <i class="ph-bold ph-music-notes text-amber-400 text-xs"></i>
+              <span class="text-[11px] font-semibold text-zinc-300">Track</span>
+              <input type="range" id="music-vol" min="0" max="1" step="0.05" value="0.8" class="w-14 h-1.5 accent-amber-400 bg-zinc-800 cursor-pointer">
+            </div>
+
+            <div class="w-px h-3.5 bg-zinc-800"></div>
+
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" id="metronome-toggle" checked class="accent-amber-400 w-3.5 h-3.5 cursor-pointer">
+              <span class="text-xs font-semibold text-zinc-200 flex items-center gap-1"><i class="ph-bold ph-metronome text-amber-400"></i> Click</span>
+            </label>
+            <div class="flex items-center gap-1.5" title="Click Volume">
+              <i class="ph ph-speaker-low text-zinc-400 text-xs"></i>
+              <input type="range" id="metronome-vol" min="0" max="1" step="0.05" value="0.8" class="w-14 h-1.5 accent-amber-400 bg-zinc-800 cursor-pointer">
+            </div>
+          </div>
+
+          <button id="btn-tap-tempo" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono font-bold border border-zinc-700 transition">
+            TAP TEMPO
+          </button>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- RIGHT: TIMING POINTS, SECTIONS & CHORDS EDITOR -->
+    <aside id="main-sidebar" class="w-full xl:w-[480px] 2xl:w-[520px] h-full max-h-screen border-t xl:border-t-0 xl:border-l border-zinc-800 bg-zinc-900/80 p-3 md:p-4 flex flex-col gap-3 transition-all duration-200 min-h-0 flex-shrink-0 z-40">
+      
+      <!-- TAB NAVIGATION -->
+      <div class="flex border-b border-zinc-800 text-xs font-semibold pb-1 flex-shrink-0">
+        <button id="tab-timing-btn" class="flex-1 py-1.5 text-zinc-400 hover:text-zinc-200 border-b-2 border-transparent flex items-center justify-center gap-1.5">
+          <i class="ph-bold ph-timer"></i> osu! Timing
+        </button>
+        <button id="tab-sections-btn" class="flex-1 py-1.5 text-zinc-400 hover:text-zinc-200 border-b-2 border-transparent flex items-center justify-center gap-1.5">
+          <i class="ph-bold ph-bookmarks"></i> Sections
+        </button>
+        <button id="tab-chords-btn" class="flex-1 py-1.5 text-amber-400 border-b-2 border-amber-400 flex items-center justify-center gap-1.5">
+          <i class="ph-bold ph-music-notes"></i> Chords
+        </button>
+      </div>
+
+      <!-- TAB 1: TIMING POINTS -->
+      <div id="tab-timing-panel" class="hidden flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-red-500 inline-block animate-ping"></span>
+            Timing Points (Tempo & Meter)
+          </h2>
+          <div class="flex items-center gap-1">
+            <button id="btn-demo-osu" class="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded border border-zinc-700">
+              Demo .osu
+            </button>
+            <button id="btn-add-timing" class="text-xs bg-amber-400 hover:bg-amber-300 text-black font-semibold px-2.5 py-1 rounded flex items-center gap-1">
+              <i class="ph-bold ph-plus"></i> Add Point
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-zinc-950 border border-amber-400/30 rounded-lg p-3">
+          <div class="text-[10px] font-mono uppercase text-amber-400 mb-1">Active Timing Point</div>
+          <div class="flex justify-between items-baseline">
+            <div class="text-lg font-mono font-bold text-white"><span id="active-point-bpm">{{ initial_project_data.bpm|default:120|floatformat:0 }}</span> BPM</div>
+            <div class="text-xs font-mono text-zinc-400">Offset: <span id="active-point-offset">0.000s</span></div>
+            <div class="text-xs font-mono bg-zinc-800 px-2 py-0.5 rounded text-amber-300" id="active-point-meter">{{ initial_project_data.beatsPerBar|default:4 }}/4</div>
+          </div>
+        </div>
+
+        <div id="timing-points-list" class="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1"></div>
+
+        <div class="flex gap-2">
+          <button id="btn-stamp-timing" class="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg border border-zinc-700 flex items-center justify-center gap-2 transition">
+            <i class="ph-bold ph-map-pin text-amber-400"></i> Stamp Current Time
+          </button>
+          <button id="btn-demo-34" class="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-xs font-semibold rounded-lg border border-amber-400/30 transition">
+            + 3/4 Demo
+          </button>
+        </div>
+      </div>
+
+      <!-- TAB 2: SECTIONS TAB & 1-CLICK PRESET TOOLBAR -->
+      <div id="tab-sections-panel" class="hidden flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <i class="ph-bold ph-flag-banner text-amber-400"></i>
+            Sections & Song Structure
+          </h2>
+          <div class="flex items-center gap-1">
+            <button id="btn-demo-medley" class="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-300 px-2 py-1 rounded border border-amber-400/30 font-semibold">
+              Demo Medley
+            </button>
+            <button id="btn-add-section" class="text-xs bg-amber-400 hover:bg-amber-300 text-black font-semibold px-2.5 py-1 rounded flex items-center gap-1">
+              <i class="ph-bold ph-plus"></i> Add Section
+            </button>
+          </div>
+        </div>
+
+        <!-- 1-Click Rename Preset Toolbar -->
+        <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 flex flex-col gap-1.5 flex-shrink-0">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-mono font-bold uppercase text-zinc-400 flex items-center gap-1.5">
+              <i class="ph-bold ph-tag text-amber-400"></i> Rename Selected Section:
+            </span>
+            <span id="active-selected-sec-pill-tab2" class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 truncate max-w-[150px]">
+              {{ initial_project_data.sections.0.name|default:"Section 1" }}
+            </span>
+          </div>
+          <div class="flex flex-wrap gap-1 pt-1">
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Intro">Intro</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Verse">Verse</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Pre-Chorus">Pre-Chorus</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Chorus">Chorus</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Bridge">Bridge</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Tag">Tag</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Instrumental">Instrumental</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Interlude">Interlude</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Transition">Transition</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Refrain">Refrain</button>
+            <button class="btn-preset-rename text-[10px] font-mono font-bold bg-zinc-900 hover:bg-amber-400 hover:text-black text-zinc-200 px-2 py-1 rounded border border-zinc-700 transition" data-name="Outro">Outro</button>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-1.5 pt-1">
+          <span class="text-[10px] text-zinc-500 font-mono w-full">Add new section at current playhead:</span>
+          <button class="btn-quick-sec text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2 py-1 rounded border border-zinc-700" data-name="Intro">+ Intro</button>
+          <button class="btn-quick-sec text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2 py-1 rounded border border-zinc-700" data-name="Verse">+ Verse</button>
+          <button class="btn-quick-sec text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-amber-300 px-2 py-1 rounded border border-amber-400/40" data-name="Chorus">+ Chorus</button>
+          <button class="btn-quick-sec text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2 py-1 rounded border border-zinc-700" data-name="Bridge">+ Bridge</button>
+          <button class="btn-quick-sec text-[10px] font-mono font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2 py-1 rounded border border-zinc-700" data-name="Tag">+ Tag</button>
+          <button id="btn-quick-new-song" class="text-[10px] font-mono font-bold bg-amber-400 text-black hover:bg-amber-300 px-2.5 py-1 rounded shadow">+ New Song</button>
+        </div>
+
+        <div id="sections-list-container" class="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1 mt-1"></div>
+      </div>
+
+      <!-- TAB 3: CHORDS & MEASURES EDITOR -->
+      <div id="tab-chords-panel" class="flex flex-col gap-3 overflow-y-auto flex-1 min-h-0 pr-1.5">
+        
+        <!-- Global Song Info & Global Transposition Header -->
+        <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 flex flex-col gap-2 flex-shrink-0">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-400">Song Info & Global Pitch</h3>
+            <span id="copy-status-msg" class="text-zinc-500 font-mono text-[10px]">ready</span>
+          </div>
+
+          <div>
+            <label class="text-[10px] font-mono text-zinc-400">Default Title & Artist</label>
+            <input type="text" id="edit-song-title" value="{{ initial_project_data.title|default:"UNTITLED PROJECT" }}" class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white uppercase font-mono">
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] font-mono text-zinc-400">Default Key</label>
+                <div class="flex items-center gap-1 font-mono text-[10px]">
+                  <span class="text-zinc-500 mr-0.5">Pitch:</span>
+                  <button id="btn-transpose-down" type="button" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 active:bg-amber-400 text-zinc-300 font-bold">-1</button>
+                  <button id="btn-transpose-up" type="button" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 active:bg-amber-400 text-zinc-300 font-bold">+1</button>
+                </div>
+              </div>
+              <input type="text" id="edit-song-key" value="{{ initial_project_data.key|default:"C" }}" class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-amber-300 font-mono font-bold uppercase">
+            </div>
+            <div>
+              <label class="text-[10px] font-mono text-zinc-400 mb-0.5 block">Total Measures</label>
+              <input type="number" id="edit-total-measures" min="2" max="2000" value="{{ initial_project_data.totalMeasures|default:8 }}" class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 font-mono">
+            </div>
+          </div>
+
+          <!-- Edit PIN Setting Input -->
+          <div class="flex items-center justify-between text-xs font-mono py-1">
+            <label for="edit-song-pin" class="text-[10px] text-zinc-400 flex items-center gap-1.5 cursor-pointer">
+              <i class="ph-bold ph-lock-key text-amber-400"></i>
+              <span>Edit PIN:</span>
+            </label>
+            <input 
+              type="password" 
+              id="edit-song-pin" 
+              maxlength="16" 
+              placeholder="Leave blank for none" 
+              class="bg-zinc-900 border border-zinc-700 focus:border-amber-400 rounded px-2 py-0.5 text-xs text-amber-300 w-36 text-center font-mono outline-none transition"
+            >
+          </div>
+        </div>
+
+        <!-- Multi-Select & Batch Toolbar -->
+        <div id="batch-selection-toolbar" class="bg-zinc-900/90 border border-amber-400/40 rounded-lg p-2 flex flex-col gap-1.5 shadow-md flex-shrink-0">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="chk-master-select-all" class="accent-amber-400 w-3.5 h-3.5 cursor-pointer rounded" title="Select / Deselect all measures">
+              <span id="batch-selection-count-lbl" class="text-[11px] font-mono font-bold text-zinc-400">0 bars selected</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button id="btn-batch-copy-selected" class="px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded text-[10px] font-mono font-bold flex items-center gap-1 transition">
+                <i class="ph-bold ph-copy"></i> Copy Selected
+              </button>
+              <button id="btn-batch-clear-selection" class="px-1.5 py-0.5 text-zinc-500 hover:text-zinc-300 text-[10px] font-mono">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 pt-1 border-t border-zinc-800/80 text-[11px] font-mono">
+            <span class="text-zinc-400">Paste clipboard at Bar:</span>
+            <input type="number" id="batch-paste-dest-bar" min="1" max="2000" value="1" class="w-12 bg-zinc-950 border border-zinc-750 rounded px-1.5 py-0.5 text-center text-amber-300 font-bold">
+            <button id="btn-batch-paste-at" class="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-black font-bold rounded flex items-center gap-1 shadow text-[10px] transition">
+              <i class="ph-bold ph-clipboard"></i> Paste Bars
+            </button>
+            <span id="batch-clipboard-status" class="text-zinc-500 text-[10px] ml-auto truncate max-w-[120px]">clipboard empty</span>
+          </div>
+        </div>
+
+        <div class="p-2 bg-zinc-950 border border-zinc-800 rounded text-[11px] text-zinc-400 leading-relaxed font-mono flex-shrink-0">
+          <div class="text-amber-400 font-bold mb-0.5">Rhythmic Space Syntax:</div>
+          <div>• Divide beats with spaces: <span class="text-zinc-200">"C . G ."</span> or <span class="text-zinc-200">"Am . F ."</span></div>
+          <div>• Syncopated off-beat hits: <span class="text-zinc-200">". . . G"</span></div>
+          <div>• Octaved leads: <span class="text-sky-300">"E5 . D5 ."</span></div>
+        </div>
+
+        <!-- Hierarchical Songs & Sections Measures List -->
+        <div id="measures-editor-list" class="flex flex-col gap-2.5 pb-8"></div>
+
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- PASTE OSU MODAL -->
+  <div id="paste-osu-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-xl p-4 flex flex-col gap-3 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i class="ph-bold ph-code text-red-400"></i> Paste .osu Beatmap File Content
+        </h3>
+        <button id="btn-close-paste-modal" class="text-zinc-400 hover:text-white text-lg">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+      <p class="text-xs text-zinc-400">
+        Paste raw text from any <code>.osu</code> file to automatically extract metadata, bookmarks, and uninherited timing points.
+      </p>
+      <textarea id="paste-osu-textarea" rows="10" placeholder="osu file format v14&#10;[General]&#10;AudioFilename: audio.mp3&#10;[TimingPoints]&#10;0,500,4,1,0,100,1,0" class="w-full bg-zinc-950 border border-zinc-800 rounded p-2.5 font-mono text-xs text-zinc-200 focus:outline-none focus:border-amber-400"></textarea>
+      <div class="flex justify-end gap-2 pt-2 border-t border-zinc-800">
+        <button id="btn-cancel-paste" class="px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 rounded">Cancel</button>
+        <button id="btn-parse-pasted-osu" class="px-4 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white rounded shadow">Parse & Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STAGE DISPLAY SETTINGS MODAL -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-md p-4 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i class="ph-bold ph-sliders-horizontal text-amber-400"></i> Stage Look-Ahead & Spectrum Settings
+        </h3>
+        <button id="btn-close-settings-modal" class="text-zinc-400 hover:text-white text-lg">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-mono font-bold text-zinc-300">Stage Layout Mode:</label>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="cursor-pointer border border-zinc-700 has-[:checked]:border-amber-400 has-[:checked]:bg-amber-400/10 rounded-lg p-2.5 flex flex-col gap-1 transition">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-white">2-Bar Alternating</span>
+              <input type="radio" name="opt-layout-mode" value="two_bar" class="accent-amber-400" checked>
+            </div>
+            <p class="text-[10px] text-zinc-400 leading-tight">Ping-pong dual deck. Inactive deck always shows next bar.</p>
+          </label>
+
+          <label class="cursor-pointer border border-zinc-700 has-[:checked]:border-amber-400 has-[:checked]:bg-amber-400/10 rounded-lg p-2.5 flex flex-col gap-1 transition">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-white">1-Bar Classic</span>
+              <input type="radio" name="opt-layout-mode" value="single_bar" class="accent-amber-400">
+            </div>
+            <p class="text-[10px] text-zinc-400 leading-tight">Single wide bar with optional Beat-4 look-ahead ghosting.</p>
+          </label>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+        <div class="flex flex-col">
+          <span class="text-xs font-bold text-zinc-200">Beat 4 Pre-Shift Ghosting</span>
+          <span class="text-[10px] text-zinc-400">Flashes upcoming downbeat chords at Beat 4 in 1-bar mode.</span>
+        </div>
+        <input type="checkbox" id="chk-beat4-ghost" checked class="accent-amber-400 w-4 h-4 cursor-pointer">
+      </div>
+
+      <div class="flex flex-col gap-1.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <span class="text-zinc-300 font-bold">Next Bar Preview Opacity:</span>
+          <span id="preview-opacity-val" class="text-amber-400 font-bold">50%</span>
+        </div>
+        <input type="range" id="range-preview-opacity" min="0.15" max="0.85" step="0.05" value="0.50" class="w-full accent-amber-400 bg-zinc-800 h-1.5 rounded cursor-pointer">
+      </div>
+
+      <!-- Audio Spectrum Settings -->
+      <div class="flex items-center justify-between p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+        <div class="flex flex-col">
+          <span class="text-xs font-bold text-zinc-200">Audio Spectrum Wave</span>
+          <span class="text-[10px] text-zinc-400">Render frequency wave pill bars at stage bottom.</span>
+        </div>
+        <input type="checkbox" id="chk-spectrum-wave" checked class="accent-amber-400 w-4 h-4 cursor-pointer">
+      </div>
+
+      <div class="flex flex-col gap-1.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <span class="text-zinc-300 font-bold">Spectrum Wave Height:</span>
+          <span id="spectrum-intensity-val" class="text-amber-400 font-bold">70%</span>
+        </div>
+        <input type="range" id="range-spectrum-intensity" min="0.2" max="1.0" step="0.05" value="0.70" class="w-full accent-amber-400 bg-zinc-800 h-1.5 rounded cursor-pointer">
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-zinc-800">
+        <button id="btn-save-settings" class="px-4 py-1.5 text-xs font-semibold bg-amber-400 hover:bg-amber-300 text-black rounded shadow font-mono">
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SAVED SONGS LIBRARY MODAL -->
+  <div id="project-library-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg p-4 flex flex-col gap-3 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i class="ph-bold ph-folder-open text-sky-400"></i> Saved Songs Library
+        </h3>
+        <button id="btn-close-library-modal" type="button" class="text-zinc-400 hover:text-white text-lg">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+      <div id="saved-songs-list" class="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
+        <!-- Populated via JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- PROTECTED SONG PIN PROMPT MODAL -->
+  <div id="pin-auth-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-zinc-950 border border-zinc-800 rounded-xl max-w-sm w-full p-5 shadow-2xl flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg bg-amber-400/10 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0">
+          <i class="ph-bold ph-lock-key text-xl"></i>
+        </div>
+        <div class="flex flex-col">
+          <h3 class="text-sm font-mono font-bold text-white uppercase tracking-wider">Project Protected</h3>
+          <p class="text-[11px] font-mono text-zinc-400">Enter the project PIN to authenticate and save changes.</p>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-1.5">
+        <input 
+          type="password" 
+          id="pin-auth-input" 
+          maxlength="16" 
+          placeholder="••••" 
+          autocomplete="off"
+          class="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-lg px-3 py-2 text-center text-sm font-mono font-bold tracking-widest text-amber-300 placeholder:text-zinc-600 outline-none transition"
+        >
+        <span id="pin-auth-error" class="text-[10px] font-mono text-red-400 hidden text-center">Incorrect PIN. Try again.</span>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-1 border-t border-zinc-900">
+        <button 
+          type="button" 
+          id="btn-pin-auth-cancel" 
+          class="px-3 py-1.5 rounded-md text-xs font-mono text-zinc-400 hover:text-white bg-zinc-900 hover:bg-zinc-800 transition"
+        >
+          Cancel
+        </button>
+        <button 
+          type="button" 
+          id="btn-pin-auth-submit" 
+          class="px-4 py-1.5 rounded-md text-xs font-mono font-bold bg-amber-400 hover:bg-amber-300 text-black transition flex items-center gap-1.5"
+        >
+          <span>Unlock & Save</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Secure JSON serialization from Django backend -->
+  {{ initial_project_data|json_script:"initial-project-data" }}
+
+  <!-- Modular Scripts in Execution Order -->
+  <script src="{% static 'js/audio-engine.js' %}"></script>
+  <script src="{% static 'js/visualizer.js' %}"></script>
+  <script src="{% static 'js/app.js' %}"></script>
+</body>
+</html>
