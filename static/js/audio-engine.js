@@ -380,62 +380,84 @@ async function clearAudioFromDB(projectId = null) {
 }
 
 async function restoreCachedAudio() {
-  try {
-    const currentPid = State.projectId;
-    const db = await getAudioDB();
-    const tx = db.transaction("audioStore", "readonly");
-    const store = tx.objectStore("audioStore");
+  return new Promise(async (resolve) => {
+    try {
+      const currentPid = State.projectId;
+      const db = await getAudioDB();
+      const tx = db.transaction("audioStore", "readonly");
+      const store = tx.objectStore("audioStore");
 
-    const searchKey = currentPid ? `audio_project_${currentPid}` : "cached_audio";
-    const getReq = store.get(searchKey);
+      const searchKey = currentPid ? `audio_project_${currentPid}` : "cached_audio";
+      const getReq = store.get(searchKey);
 
-    getReq.onsuccess = () => {
-      let record = getReq.result;
+      getReq.onsuccess = async () => {
+        let record = getReq.result;
 
-      if (!record && currentPid) {
-        const fallbackReq = store.get("cached_audio");
-        fallbackReq.onsuccess = () => {
-          const fbRecord = fallbackReq.result;
-          if (fbRecord && fbRecord.data && fbRecord.projectId == currentPid) {
-            applyAudioRecord(fbRecord);
-          }
-        };
-        return;
-      }
+        if (!record && currentPid) {
+          const fallbackReq = store.get("cached_audio");
+          fallbackReq.onsuccess = async () => {
+            const fbRecord = fallbackReq.result;
+            if (fbRecord && fbRecord.data) {
+              await applyAudioRecord(fbRecord);
+              saveAudioToDB(fbRecord.data, fbRecord.name, currentPid);
+              resolve(true);
+            } else {
+              resolve(false);
+            }
+          };
+          fallbackReq.onerror = () => resolve(false);
+          return;
+        }
 
-      if (!currentPid && record && record.projectId) {
-        return;
-      }
+        if (!currentPid && record && record.projectId) {
+          resolve(false);
+          return;
+        }
 
-      if (record && record.data) {
-        applyAudioRecord(record);
-      }
-    };
-  } catch (err) {
-    console.warn("IndexedDB restore error:", err);
-  }
+        if (record && record.data) {
+          await applyAudioRecord(record);
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      };
+
+      getReq.onerror = () => resolve(false);
+    } catch (err) {
+      console.warn("IndexedDB restore error:", err);
+      resolve(false);
+    }
+  });
 }
 
 function applyAudioRecord(item) {
   const filename = item.name || "audio.mp3";
-  AudioEngine.init().decodeAudioData(item.data.slice(0), (buf) => {
-    State.audioBuffer = buf;
+  if (item.data) {
+    window.currentAudioRawBuffer = item.data.slice(0);
+    window.currentAudioFileName = filename;
+  }
+  return new Promise((resolve) => {
+    AudioEngine.init().decodeAudioData(item.data.slice(0), (buf) => {
+      State.audioBuffer = buf;
 
-    const audioLbl = document.getElementById('audio-filename-lbl');
-    const audioIcon = document.getElementById('audio-status-icon');
-    const clearAudioBtn = document.getElementById('btn-clear-audio');
-    if (audioLbl) audioLbl.textContent = filename.length > 12 ? filename.substring(0, 10) + '...' : filename;
-    if (audioIcon) audioIcon.className = "ph-bold ph-check-circle text-sm text-green-400";
-    if (clearAudioBtn) clearAudioBtn.classList.remove('hidden');
+      const audioLbl = document.getElementById('audio-filename-lbl');
+      const audioIcon = document.getElementById('audio-status-icon');
+      const clearAudioBtn = document.getElementById('btn-clear-audio');
+      if (audioLbl) audioLbl.textContent = filename.length > 12 ? filename.substring(0, 10) + '...' : filename;
+      if (audioIcon) audioIcon.className = "ph-bold ph-check-circle text-sm text-green-400";
+      if (clearAudioBtn) clearAudioBtn.classList.remove('hidden');
 
-    State.currentTime = 0;
-    State.songPlaybackOffset = 0;
-    State.currentGlobalBar = 1;
-    State.currentBeat = 1;
-    recalculateTotalDuration();
-    seekToTime(0);
-    updateEngine();
-  }, (decodeErr) => {
-    console.warn("Cached audio decode failed:", decodeErr);
+      State.currentTime = 0;
+      State.songPlaybackOffset = 0;
+      State.currentGlobalBar = 1;
+      State.currentBeat = 1;
+      recalculateTotalDuration();
+      seekToTime(0);
+      updateEngine();
+      resolve(true);
+    }, (decodeErr) => {
+      console.warn("Cached audio decode failed:", decodeErr);
+      resolve(false);
+    });
   });
 }

@@ -80,6 +80,61 @@ while (State.measures.length < State.song.totalMeasures) {
 }
 
 /* =========================================================================
+   PROJECT SNAPSHOT & UNSAVED PROGRESS DETECTION
+   ========================================================================= */
+let lastSavedSnapshot = null;
+let currentAudioFile = null;
+
+function getProjectSnapshot() {
+  return JSON.stringify({
+    title: (State.song.title || '').trim().toUpperCase(),
+    key: (State.song.key || '').trim().toUpperCase(),
+    totalMeasures: State.song.totalMeasures || 8,
+    timingPoints: (State.timingPoints || []).map(tp => ({
+      offset: Math.round((tp.offset || 0) * 1000) / 1000,
+      bpm: Math.round((tp.bpm || 120) * 100) / 100,
+      beatsPerBar: tp.beatsPerBar || 4
+    })),
+    sections: (State.sections || []).map(s => ({
+      startBar: s.startBar,
+      name: (s.name || '').trim(),
+      color: s.color || '#facc15',
+      isNewSong: !!s.isNewSong,
+      songTitle: (s.songTitle || '').trim(),
+      songKey: (s.songKey || '').trim()
+    })),
+    measures: (State.measures || []).map(m => ({
+      bar: m.bar,
+      chordLine: (m.chordLine || '').trim(),
+      leadLine: (m.leadLine || '').trim()
+    }))
+  });
+}
+
+function hasStudioContent() {
+  const hasChords = (State.measures || []).some(m => (m.chordLine && m.chordLine.trim()) || (m.leadLine && m.leadLine.trim()));
+  const hasAudio = !!State.audioBuffer;
+  const hasCustomSections = (State.sections || []).length > 1 || ((State.sections || [])[0] && State.sections[0].name !== 'Section 1');
+  const hasCustomTitle = State.song.title && State.song.title.trim().toUpperCase() !== 'UNTITLED PROJECT';
+  return Boolean(hasChords || hasAudio || hasCustomSections || hasCustomTitle);
+}
+
+function hasUnsavedChanges() {
+  if (!State.projectId) {
+    return hasStudioContent();
+  }
+  if (currentAudioFile) {
+    return true;
+  }
+  if (lastSavedSnapshot) {
+    return getProjectSnapshot() !== lastSavedSnapshot;
+  }
+  return false;
+}
+
+lastSavedSnapshot = getProjectSnapshot();
+
+/* =========================================================================
    2. COLOR PALETTES & SECTION HELPERS
    ========================================================================= */
 const SONG_PALETTES = [
@@ -1317,20 +1372,41 @@ function saveProject() {
     ? `/api/project/${State.projectId}/save/` 
     : `/api/project/save/`;
 
-  fetch(endpoint, {
+  let uploadFile = currentAudioFile;
+  if (!uploadFile && window.currentAudioRawBuffer && !backendData.audioUrl) {
+    try {
+      uploadFile = new File([window.currentAudioRawBuffer], window.currentAudioFileName || "audio_track.mp3", { type: "audio/mpeg" });
+    } catch (e) {
+      uploadFile = new Blob([window.currentAudioRawBuffer], { type: "audio/mpeg" });
+    }
+  }
+
+  let requestBody;
+  let requestHeaders = {
+    'X-CSRFToken': getCookie('csrftoken') || ''
+  };
+
+  if (uploadFile) {
+    const formData = new FormData();
+    formData.append('project_data', JSON.stringify(payload));
+    formData.append('audio_file', uploadFile, window.currentAudioFileName || "audio_track.mp3");
+    requestBody = formData;
+  } else {
+    requestHeaders['Content-Type'] = 'application/json';
+    requestBody = JSON.stringify(payload);
+  }
+
+  return fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': getCookie('csrftoken') || ''
-    },
-    body: JSON.stringify(payload)
+    headers: requestHeaders,
+    body: requestBody
   })
   .then(async response => {
     if (response.status === 403) {
       try {
         const pin = await promptProjectPin(currentProjectPin !== null);
         currentProjectPin = pin;
-        saveProject();
+        return saveProject();
       } catch (err) {
         showToast("Save cancelled: PIN required");
       }
@@ -1341,7 +1417,7 @@ function saveProject() {
     return response.json();
   })
   .then(data => {
-    if (!data) return;
+    if (!data) return null;
     if (data.projectId) {
       State.projectId = data.projectId;
       try {
@@ -1349,11 +1425,23 @@ function saveProject() {
       } catch (e) {}
       window.history.replaceState({}, '', `/${data.projectId}/`);
     }
+    if (data.audioUrl) {
+      backendData.audioUrl = data.audioUrl;
+    }
+    if (window.currentAudioRawBuffer && data.projectId && typeof saveAudioToDB === 'function') {
+      saveAudioToDB(window.currentAudioRawBuffer, window.currentAudioFileName || "audio.mp3", data.projectId);
+    }
+    currentAudioFile = null;
+    if (typeof getProjectSnapshot === 'function') {
+      lastSavedSnapshot = getProjectSnapshot();
+    }
     showToast("Project saved to Database!");
+    return data;
   })
   .catch(err => {
     console.error("Save error:", err);
     showToast("Error saving to database");
+    return null;
   })
   .finally(() => {
     if (saveBtn) saveBtn.disabled = false;
@@ -1999,18 +2087,21 @@ window.addEventListener('DOMContentLoaded', () => {
     audioFileInput.onchange = (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      currentAudioFile = file;
+      window.currentAudioFileName = file.name;
       const r = new FileReader();
       r.onload = (evt) => {
-        saveAudioToDB(evt.target.result.slice(0), file.name, State.projectId);
+        window.currentAudioRawBuffer = evt.target.result.slice(0);
+        saveAudioToDB(window.currentAudioRawBuffer, file.name, State.projectId);
+        saveAudioToDB(window.currentAudioRawBuffer, file.name, null);
+
         AudioEngine.init().decodeAudioData(evt.target.result, (buf) => {
           State.audioBuffer = buf;
           recalculateTotalDuration();
           const audioLbl = document.getElementById('audio-filename-lbl');
           const audioIcon = document.getElementById('audio-status-icon');
-          const clearAudioBtn = document.getElementById('btn-clear-audio');
-          if (audioLbl) audioLbl.textContent = file.name.substring(0, 10) + '...';
+          if (audioLbl) audioLbl.textContent = file.name.length > 12 ? file.name.substring(0, 10) + '...' : file.name;
           if (audioIcon) audioIcon.className = "ph-bold ph-check-circle text-sm text-green-400";
-          if (clearAudioBtn) clearAudioBtn.classList.remove('hidden');
           
           State.currentTime = 0;
           State.songPlaybackOffset = 0;
@@ -2020,18 +2111,120 @@ window.addEventListener('DOMContentLoaded', () => {
           updateScrubberBounds();
           updateEngine();
         });
+
+        // If project already exists on backend, upload immediately in background
+        if (State.projectId) {
+          const fd = new FormData();
+          fd.append('audio_file', file);
+          fetch(`/api/project/${State.projectId}/upload-audio/`, {
+            method: 'POST',
+            headers: {
+              'X-CSRFToken': getCookie('csrftoken') || ''
+            },
+            body: fd
+          })
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.audioUrl) {
+              backendData.audioUrl = data.audioUrl;
+              currentAudioFile = null;
+              showToast("Audio track saved to project!");
+            }
+          })
+          .catch(err => {
+            console.warn("Background audio upload error:", err);
+          });
+        }
       };
       r.readAsArrayBuffer(file);
     };
   }
 
+  // New Project / Clean Slate Studio System
+  const newProjectModal = document.getElementById('new-project-modal') || document.getElementById('trash-warning-modal');
+  const btnCancelNewProject = document.getElementById('btn-cancel-new-project') || document.getElementById('btn-cancel-trash');
+  const btnDiscardNewProject = document.getElementById('btn-discard-new-project') || document.getElementById('btn-confirm-trash-discard');
+  const btnSaveNewProject = document.getElementById('btn-save-new-project') || document.getElementById('btn-confirm-trash-save');
+  const btnNewProject = document.getElementById('btn-new-project') || document.getElementById('btn-trash-project');
   const btnClearAudio = document.getElementById('btn-clear-audio');
+
+  function openNewProjectModal() {
+    if (!newProjectModal) {
+      if (hasUnsavedChanges()) {
+        if (confirm("Warning: You have unsaved progress that will be gone. Start a new project anyway?")) {
+          cleanSlateWorkspace();
+        }
+      } else {
+        cleanSlateWorkspace();
+      }
+      return;
+    }
+
+    const isUnsaved = hasUnsavedChanges();
+    const modalTitle = document.getElementById('new-project-modal-title') || document.getElementById('trash-modal-title');
+    const modalDesc = document.getElementById('new-project-modal-desc') || document.getElementById('trash-modal-desc');
+    const modalSubdesc = document.getElementById('new-project-modal-subdesc') || document.getElementById('trash-modal-subdesc');
+    const iconContainer = document.getElementById('new-project-icon-container') || document.getElementById('trash-modal-icon-container');
+    const icon = document.getElementById('new-project-icon') || document.getElementById('trash-modal-icon');
+    const btnDiscard = document.getElementById('btn-discard-new-project') || document.getElementById('btn-confirm-trash-discard');
+    const btnSave = document.getElementById('btn-save-new-project') || document.getElementById('btn-confirm-trash-save');
+
+    if (isUnsaved) {
+      if (modalTitle) modalTitle.textContent = "Warning: Unsaved Progress";
+      if (modalDesc) modalDesc.textContent = "Your current project has unsaved changes. If you start a new project without saving, this progress will be gone. Would you like to save it to your library first, or start a new project anyway?";
+      if (modalSubdesc) modalSubdesc.textContent = "Saved projects in your library will remain safe.";
+      if (iconContainer) {
+        iconContainer.className = "w-10 h-10 rounded-lg bg-amber-400/10 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5";
+      }
+      if (icon) icon.className = "ph-bold ph-warning text-2xl";
+      if (btnDiscard) {
+        btnDiscard.textContent = "Discard & Start New";
+        btnDiscard.className = "px-3 py-1.5 rounded-md text-xs font-mono font-semibold text-red-400 hover:text-white bg-red-950/40 hover:bg-red-600/80 border border-red-500/40 transition";
+      }
+      if (btnSave) {
+        btnSave.classList.remove('hidden');
+      }
+    } else {
+      if (modalTitle) modalTitle.textContent = "Start New Project";
+      if (modalDesc) modalDesc.textContent = State.projectId
+        ? "Your current project is saved in your library and can be reopened anytime. Start a new clean project?"
+        : "Reset the studio workspace to a clean slate to start a new project.";
+      if (modalSubdesc) modalSubdesc.textContent = "Your saved projects in the library will remain safe.";
+      if (iconContainer) {
+        iconContainer.className = "w-10 h-10 rounded-lg bg-amber-400/10 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5";
+      }
+      if (icon) icon.className = "ph-bold ph-file-plus text-2xl";
+      if (btnDiscard) {
+        btnDiscard.textContent = "Start New Project";
+        btnDiscard.className = "px-4 py-1.5 rounded-md text-xs font-mono font-bold text-black bg-amber-400 hover:bg-amber-300 transition shadow-lg shadow-amber-400/20";
+      }
+      if (btnSave) {
+        btnSave.classList.add('hidden');
+      }
+    }
+
+    newProjectModal.classList.remove('hidden');
+  }
+
+  function closeNewProjectModal() {
+    if (newProjectModal) newProjectModal.classList.add('hidden');
+  }
+
+  if (btnNewProject) {
+    btnNewProject.onclick = (e) => {
+      e.preventDefault();
+      openNewProjectModal();
+    };
+  }
+
+  // Audio track remove button (only clears audio, does NOT touch the project!)
   if (btnClearAudio) {
     btnClearAudio.onclick = async (e) => {
       e.preventDefault();
       AudioEngine.pause();
       AudioEngine.stopAudioSource();
       State.audioBuffer = null;
+      backendData.audioUrl = null;
 
       try {
         if (typeof clearAudioFromDB === 'function') {
@@ -2049,9 +2242,213 @@ window.addEventListener('DOMContentLoaded', () => {
       recalculateTotalDuration();
       seekToTime(0);
       updateEngine();
-      showToast("Audio cleared (clean state)");
+      showToast("Audio track removed");
     };
   }
+
+  if (btnCancelNewProject) {
+    btnCancelNewProject.onclick = (e) => {
+      e.preventDefault();
+      closeNewProjectModal();
+    };
+  }
+
+  if (btnDiscardNewProject) {
+    btnDiscardNewProject.onclick = async (e) => {
+      e.preventDefault();
+      closeNewProjectModal();
+      await cleanSlateWorkspace();
+    };
+  }
+
+  if (btnSaveNewProject) {
+    btnSaveNewProject.onclick = async (e) => {
+      e.preventDefault();
+      const saved = await saveProject();
+      if (saved) {
+        closeNewProjectModal();
+        await cleanSlateWorkspace();
+      }
+    };
+  }
+
+  if (newProjectModal) {
+    newProjectModal.onclick = (e) => {
+      if (e.target === newProjectModal) closeNewProjectModal();
+    };
+  }
+
+  async function cleanSlateWorkspace() {
+    // 1. Exit stage/video presentation mode if active
+    if (State.isVideoMode && typeof exitStageMode === 'function') {
+      exitStageMode();
+    }
+
+    // 2. Stop and reset audio playback
+    if (typeof AudioEngine !== 'undefined') {
+      try {
+        AudioEngine.pause();
+        AudioEngine.stopAudioSource();
+      } catch (e) {}
+    }
+    State.isPlaying = false;
+    State.audioBuffer = null;
+    currentAudioFile = null;
+    window.currentAudioFileName = null;
+    window.currentAudioRawBuffer = null;
+    State.currentTime = 0;
+    State.songPlaybackOffset = 0;
+    State.currentGlobalBar = 1;
+    State.currentBeat = 1;
+    State.loopBar = false;
+    State.loopTargetBar = 1;
+    backendData.audioUrl = null;
+
+    // 3. Reset project ID to null (clean root studio, NOT deleting project from DB!)
+    State.projectId = null;
+    State.isLocked = false;
+    currentProjectPin = null;
+
+    // 4. Wipe temporary session storage & root audio cache
+    try {
+      sessionStorage.removeItem('syncstage_tp_root');
+      if (typeof clearAudioFromDB === 'function') {
+        await clearAudioFromDB(null);
+      }
+    } catch (err) {}
+
+    // 5. Reset song metadata to clean defaults
+    State.song = {
+      title: "UNTITLED PROJECT",
+      key: "C",
+      totalMeasures: 8
+    };
+
+    // 6. Reset sections (wipes all medley songs & extra sections in studio)
+    State.isMedleyMode = false;
+    State.sections = [
+      {
+        id: 1,
+        startBar: 1,
+        name: "Section 1",
+        color: "#facc15",
+        isNewSong: true,
+        songTitle: "UNTITLED PROJECT",
+        songKey: "C"
+      }
+    ];
+    State.selectedSectionId = 1;
+    State.collapsedSections.clear();
+    State.collapsedSongs.clear();
+
+    // 7. Reset timing points to clean default single timing point
+    State.timingPoints = [
+      {
+        id: 1,
+        offset: 0.0,
+        bpm: 120.0,
+        beatsPerBar: 4
+      }
+    ];
+
+    // 8. Wipe ALL measures / chords (no chords, no leads in studio)
+    State.measures = [];
+    for (let i = 1; i <= State.song.totalMeasures; i++) {
+      State.measures.push({ bar: i, chordLine: "", leadLine: "" });
+    }
+
+    // 9. Reset multi-bar selection & clipboard
+    State.selectedBars.clear();
+    State.multiBarClipboard = null;
+
+    // 10. Reset all UI inputs & labels
+    const titleInput = document.getElementById('edit-song-title');
+    if (titleInput) titleInput.value = State.song.title;
+
+    const keyInput = document.getElementById('edit-song-key');
+    if (keyInput) keyInput.value = State.song.key;
+
+    const totalMeasuresInput = document.getElementById('edit-total-measures');
+    if (totalMeasuresInput) totalMeasuresInput.value = State.song.totalMeasures;
+
+    const pinInput = document.getElementById('edit-song-pin');
+    if (pinInput) pinInput.value = '';
+
+    const medleyToggle = document.getElementById('toggle-medley-mode');
+    if (medleyToggle) medleyToggle.checked = false;
+
+    const audioFileInput = document.getElementById('audio-file-input');
+    if (audioFileInput) audioFileInput.value = '';
+
+    const audioLbl = document.getElementById('audio-filename-lbl');
+    if (audioLbl) audioLbl.textContent = 'Load Audio';
+
+    const audioIcon = document.getElementById('audio-status-icon');
+    if (audioIcon) audioIcon.className = 'ph ph-upload-simple text-sm text-amber-400';
+
+    if (btnClearAudio) btnClearAudio.classList.add('hidden');
+
+    const osuFileInput = document.getElementById('osu-file-input');
+    if (osuFileInput) osuFileInput.value = '';
+
+    const osuFilenameLbl = document.getElementById('osu-filename-lbl');
+    if (osuFilenameLbl) osuFilenameLbl.textContent = 'Import .osu';
+
+    const pasteOsuText = document.getElementById('paste-osu-textarea');
+    if (pasteOsuText) pasteOsuText.value = '';
+
+    const batchCountLbl = document.getElementById('batch-selection-count-lbl');
+    if (batchCountLbl) batchCountLbl.textContent = '0 bars selected';
+
+    const masterSelectAllChk = document.getElementById('chk-master-select-all');
+    if (masterSelectAllChk) {
+      masterSelectAllChk.checked = false;
+      masterSelectAllChk.indeterminate = false;
+    }
+
+    const batchClipStatus = document.getElementById('batch-clipboard-status');
+    if (batchClipStatus) batchClipStatus.textContent = 'clipboard empty';
+
+    const btnPlayText = document.getElementById('btn-play-text');
+    const btnPlayIcon = document.getElementById('btn-play-icon');
+    if (btnPlayText) btnPlayText.textContent = 'PLAY';
+    if (btnPlayIcon) btnPlayIcon.className = 'ph-fill ph-play text-base';
+
+    const stagePlayText = document.getElementById('stage-play-text');
+    const stagePlayIcon = document.getElementById('stage-play-icon');
+    if (stagePlayText) stagePlayText.textContent = 'Play';
+    if (stagePlayIcon) stagePlayIcon.className = 'ph-fill ph-play text-sm';
+
+    const loopText = document.getElementById('loop-state-text');
+    if (loopText) loopText.textContent = 'Loop Bar: OFF';
+
+    // 11. Clean browser URL to /
+    if (window.location.pathname !== '/') {
+      window.history.replaceState({}, '', '/');
+    }
+
+    // 12. Full engine & canvas re-render
+    recalculateTotalDuration();
+    seekToTime(0);
+    updateEngine();
+    updateScrubberBounds();
+    updateScrubberUI();
+    updateSelectedSectionUI();
+
+    if (typeof Visualizer !== 'undefined' && Visualizer.draw) {
+      Visualizer.draw();
+    }
+
+    lastSavedSnapshot = getProjectSnapshot();
+    showToast("New project started.");
+  }
+
+  window.openNewProjectModal = openNewProjectModal;
+  window.closeNewProjectModal = closeNewProjectModal;
+  window.openTrashModal = openNewProjectModal;
+  window.closeTrashModal = closeNewProjectModal;
+  window.cleanSlateWorkspace = cleanSlateWorkspace;
+  window.wipeEntireWorkspace = cleanSlateWorkspace;
 
   // Settings Modal
   const settingsModal = document.getElementById('settings-modal');
@@ -2131,8 +2528,13 @@ window.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       if (State.isVideoMode) exitStageMode();
       else enterStageMode();
-    } else if (e.code === 'Escape' && State.isVideoMode) {
-      exitStageMode();
+    } else if (e.code === 'Escape') {
+      const modal = document.getElementById('new-project-modal') || document.getElementById('trash-warning-modal');
+      if (modal && !modal.classList.contains('hidden')) {
+        closeNewProjectModal();
+        return;
+      }
+      if (State.isVideoMode) exitStageMode();
     } else if (e.code === 'ArrowLeft') {
       seekToTime(State.currentTime - 1);
     } else if (e.code === 'ArrowRight') {
@@ -2151,32 +2553,43 @@ window.addEventListener('DOMContentLoaded', () => {
 
   updateEngine();
   seekToTime(0);
-  restoreCachedAudio();
 
-  // If project has an audio file on backend and no cached buffer is restored
-  if (backendData.audioUrl) {
-    setTimeout(() => {
-      if (!State.audioBuffer) {
-        fetch(backendData.audioUrl)
-          .then(res => res.arrayBuffer())
-          .then(bufData => {
-            AudioEngine.init().decodeAudioData(bufData, (buf) => {
-              State.audioBuffer = buf;
-              recalculateTotalDuration();
-              const audioLbl = document.getElementById('audio-filename-lbl');
-              const audioIcon = document.getElementById('audio-status-icon');
-              const clearAudioBtn = document.getElementById('btn-clear-audio');
-              if (audioLbl) audioLbl.textContent = 'Server Track';
-              if (audioIcon) audioIcon.className = "ph-bold ph-check-circle text-sm text-green-400";
-              if (clearAudioBtn) clearAudioBtn.classList.remove('hidden');
-              updateScrubberBounds();
-              updateEngine();
-            });
-          })
-          .catch(e => console.warn("Backend audioUrl fetch failed:", e));
+  async function initAudioTrack() {
+    try {
+      await restoreCachedAudio();
+    } catch (e) {
+      console.warn("restoreCachedAudio error:", e);
+    }
+
+    if (!State.audioBuffer && backendData.audioUrl) {
+      try {
+        const res = await fetch(backendData.audioUrl);
+        if (res.ok) {
+          const bufData = await res.arrayBuffer();
+          const cleanName = decodeURIComponent(backendData.audioUrl.split('/').pop() || "Audio Track");
+          window.currentAudioRawBuffer = bufData.slice(0);
+          window.currentAudioFileName = cleanName;
+          if (typeof saveAudioToDB === 'function') {
+            saveAudioToDB(bufData.slice(0), cleanName, State.projectId);
+          }
+          AudioEngine.init().decodeAudioData(bufData, (buf) => {
+            State.audioBuffer = buf;
+            recalculateTotalDuration();
+            const audioLbl = document.getElementById('audio-filename-lbl');
+            const audioIcon = document.getElementById('audio-status-icon');
+            if (audioLbl) audioLbl.textContent = cleanName.length > 12 ? cleanName.substring(0, 10) + '...' : cleanName;
+            if (audioIcon) audioIcon.className = "ph-bold ph-check-circle text-sm text-green-400";
+            updateScrubberBounds();
+            updateEngine();
+          });
+        }
+      } catch (e) {
+        console.warn("Backend audioUrl fetch failed:", e);
       }
-    }, 400);
+    }
   }
+
+  initAudioTrack();
 
   requestAnimationFrame(animationLoop);
 });

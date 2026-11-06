@@ -53,16 +53,11 @@
       </button>
 
       <!-- Audio file upload -->
-      <div class="flex items-center gap-1">
-        <label class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition">
-          <i id="audio-status-icon" class="ph ph-upload-simple text-sm text-amber-400"></i>
-          <span id="audio-filename-lbl">Load Audio</span>
-          <input type="file" id="audio-file-input" accept="audio/*" class="hidden">
-        </label>
-        <button id="btn-clear-audio" class="hidden text-zinc-500 hover:text-red-400 p-1.5 rounded bg-zinc-900 border border-zinc-800 transition text-xs" title="Remove cached audio">
-          <i class="ph-bold ph-trash"></i>
-        </button>
-      </div>
+      <label class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-3 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition">
+        <i id="audio-status-icon" class="ph ph-upload-simple text-sm text-amber-400"></i>
+        <span id="audio-filename-lbl">Load Audio</span>
+        <input type="file" id="audio-file-input" accept="audio/*" class="hidden">
+      </label>
 
       <!-- Video / Presentation Stage Mode -->
       <button id="btn-video-mode" class="bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs px-3.5 py-1.5 rounded-md flex items-center gap-1.5 shadow transition">
@@ -93,6 +88,12 @@
       <button id="btn-open-library" type="button" class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Open saved songs">
         <i class="ph-bold ph-folder-open text-sky-400"></i>
         <span>Open</span>
+      </button>
+
+      <!-- New Project -->
+      <button id="btn-new-project" type="button" class="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs px-2.5 py-1.5 rounded-md border border-zinc-700 flex items-center gap-1.5 transition" title="Start a New Project (Clean slate)">
+        <i class="ph-bold ph-file-plus text-amber-400 text-sm"></i>
+        <span>New Project</span>
       </button>
 
       <!-- Visualizer Settings -->
@@ -596,6 +597,53 @@
           class="px-4 py-1.5 rounded-md text-xs font-mono font-bold bg-amber-400 hover:bg-amber-300 text-black transition flex items-center gap-1.5"
         >
           <span>Unlock & Save</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW PROJECT / CLEAN SLATE MODAL -->
+  <div id="new-project-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-zinc-950 border border-zinc-800 rounded-xl max-w-md w-full p-5 shadow-2xl flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150">
+      <div class="flex items-start gap-3.5">
+        <div id="new-project-icon-container" class="w-10 h-10 rounded-lg bg-amber-400/10 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+          <i id="new-project-icon" class="ph-bold ph-file-plus text-2xl"></i>
+        </div>
+        <div class="flex flex-col">
+          <h3 id="new-project-modal-title" class="text-sm font-mono font-bold text-amber-300 uppercase tracking-wider">
+            Start New Project
+          </h3>
+          <p id="new-project-modal-desc" class="text-xs text-zinc-300 mt-1 leading-relaxed">
+            Your current project has unsaved changes. If you start a new project without saving, this progress will be gone.
+          </p>
+          <p id="new-project-modal-subdesc" class="text-[11px] font-mono text-zinc-500 mt-1">
+            Saved projects in your library will remain safe.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-900 flex-wrap">
+        <button 
+          type="button" 
+          id="btn-cancel-new-project" 
+          class="px-3 py-1.5 rounded-md text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 transition"
+        >
+          Cancel
+        </button>
+        <button 
+          type="button" 
+          id="btn-discard-new-project" 
+          class="px-3 py-1.5 rounded-md text-xs font-mono font-semibold text-red-400 hover:text-white bg-red-950/40 hover:bg-red-600/80 border border-red-500/40 transition"
+        >
+          Discard & Start New
+        </button>
+        <button 
+          type="button" 
+          id="btn-save-new-project" 
+          class="px-3.5 py-1.5 rounded-md text-xs font-mono font-bold bg-amber-400 hover:bg-amber-300 text-black transition flex items-center gap-1.5 shadow-lg shadow-amber-400/20"
+        >
+          <i class="ph-bold ph-floppy-disk"></i>
+          <span>Save & Start New</span>
         </button>
       </div>
     </div>

@@ -12,6 +12,7 @@ urlpatterns = [
     path('api/project/save/', views.save_project_api, name='api_save_new'),
     path('api/project/<int:project_id>/', views.load_project_api, name='api_load_project'),
     path('api/project/<int:project_id>/save/', views.save_project_api, name='api_save_existing'),
+    path('api/project/<int:project_id>/upload-audio/', views.upload_audio_api, name='api_upload_audio'),
 
     path('<int:project_id>/', views.studio_view, name='studio_project'),
 ]
