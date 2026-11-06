@@ -138,14 +138,15 @@ def save_project_api(request, project_id=None, slug=None):
     # 1. PIN verification for existing projects
     if identifier:
         project = get_project_by_identifier(identifier)
-        provided_pin = data.get("pin")
+        provided_pin = data.get("pin") or data.get("setPin")
         
         # If the project has an edit_pin set and provided pin doesn't match
-        if project.edit_pin and project.edit_pin != provided_pin:
-            return JsonResponse({
-                "status": "locked",
-                "error": "This song is protected. Incorrect edit PIN."
-            }, status=403)
+        if project.edit_pin:
+            if not provided_pin or str(project.edit_pin).strip() != str(provided_pin).strip():
+                return JsonResponse({
+                    "status": "locked",
+                    "error": "This song is protected. Incorrect edit PIN."
+                }, status=403)
     else:
         project = SongProject()
 
@@ -221,6 +222,7 @@ def save_project_api(request, project_id=None, slug=None):
         "projectId": project.id,
         "slug": project.slug,
         "projectSlug": project.slug,
+        "isLocked": bool(project.edit_pin),
         "audioUrl": project.audio_file.url if project.audio_file else None
     })
 
@@ -309,24 +311,64 @@ def api_list_projects(request):
     projects = (
         SongProject.objects.all()
         .order_by('-updated_at')
-        .values('id', 'slug', 'title', 'default_key', 'bpm', 'total_measures', 'updated_at')
+        .values('id', 'slug', 'title', 'default_key', 'bpm', 'total_measures', 'edit_pin', 'updated_at')
     )
-    return JsonResponse({"projects": list(projects)})
+    result = [
+        {
+            'id': p['id'],
+            'slug': p['slug'],
+            'title': p['title'],
+            'default_key': p['default_key'],
+            'bpm': p['bpm'],
+            'total_measures': p['total_measures'],
+            'isProtected': bool(p['edit_pin']),
+            'updated_at': p['updated_at']
+        }
+        for p in projects
+    ]
+    return JsonResponse({"projects": result})
 
 
 @csrf_exempt
 def delete_project_api(request, project_id=None, slug=None):
-    """Deletes a song project. Returns JSON if requested via AJAX/fetch, otherwise redirects to /"""
+    """Deletes a song project. Enforces PIN protection unless caller has admin-level permission."""
     identifier = project_id if project_id is not None else slug
+    if str(identifier).isdigit():
+        project = SongProject.objects.filter(id=int(identifier)).first()
+    else:
+        project = SongProject.objects.filter(slug=identifier).first()
+
+    if not project:
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('accept', ''):
+            return JsonResponse({"status": "deleted", "projectId": identifier})
+        return redirect('/')
+
+    # If project is PIN protected, verify PIN
+    if project.edit_pin:
+        provided_pin = None
+        if request.body:
+            try:
+                body_data = json.loads(request.body.decode('utf-8'))
+                if isinstance(body_data, dict):
+                    provided_pin = body_data.get('pin')
+            except Exception:
+                pass
+        if not provided_pin:
+            provided_pin = request.POST.get('pin') or request.GET.get('pin') or request.headers.get('x-project-pin')
+
+        if not provided_pin or str(project.edit_pin).strip() != str(provided_pin).strip():
+            return JsonResponse({
+                "status": "locked",
+                "error": "This song is protected. Incorrect edit PIN."
+            }, status=403)
+
     try:
-        if str(identifier).isdigit():
-            project = SongProject.objects.filter(id=int(identifier)).first()
-        else:
-            project = SongProject.objects.filter(slug=identifier).first()
-        if project:
-            project.delete()
+        if project.audio_file:
+            project.audio_file.delete(save=False)
+        project.delete()
     except Exception as e:
         print("Delete error:", e)
+        return JsonResponse({"error": str(e)}, status=500)
 
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('accept', ''):
         return JsonResponse({"status": "deleted", "projectId": identifier})

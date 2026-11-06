@@ -1194,6 +1194,7 @@ function openSongLibrary() {
           <div class="flex flex-col gap-0.5 cursor-pointer flex-1 mr-2" data-action="load">
             <div class="text-xs font-mono font-bold text-white uppercase flex items-center gap-2">
               <span>${p.title || 'UNTITLED PROJECT'}</span>
+              ${p.isProtected ? '<i class="ph-bold ph-lock-key text-amber-400 text-xs" title="Protected by PIN"></i>' : ''}
               ${isCurrent ? '<span class="text-[9px] bg-amber-400 text-black px-1.5 py-0.2 rounded font-black">CURRENT</span>' : ''}
             </div>
             <div class="text-[10px] font-mono text-zinc-400">
@@ -1208,7 +1209,7 @@ function openSongLibrary() {
             <button type="button" class="btn-load-song px-3 py-1 text-[11px] font-mono font-bold bg-amber-400 hover:bg-amber-300 text-black rounded transition">
               Load
             </button>
-            <button type="button" class="btn-delete-song p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-900 rounded border border-transparent hover:border-zinc-800 transition flex items-center justify-center cursor-pointer" title="Delete Song">
+            <button type="button" class="btn-delete-song p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-900 rounded border border-transparent hover:border-zinc-800 transition flex items-center justify-center cursor-pointer" title="${p.isProtected ? 'Protected Song - Delete requires PIN' : 'Delete Song'}">
               <i class="ph-bold ph-trash text-sm pointer-events-none"></i>
             </button>
           </div>
@@ -1226,38 +1227,70 @@ function openSongLibrary() {
           delBtn.onclick = async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (!confirm(`Permanently delete "${p.title || 'Song'}" and return to clean root?`)) return;
+            if (!confirm(`Permanently delete "${p.title || 'Song'}"?`)) return;
+
+            let pinToSend = (State.projectId === p.id && currentProjectPin) ? currentProjectPin : null;
+
+            async function requestDelete(pin) {
+              return fetch(`/api/project/${p.id}/delete/`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Requested-With': 'XMLHttpRequest',
+                  'X-CSRFToken': getCookie('csrftoken') || ''
+                },
+                body: JSON.stringify({ pin: pin || '' })
+              });
+            }
 
             try {
-              if (typeof clearAudioFromDB === 'function') {
-                await clearAudioFromDB(p.id);
-                if (State.projectId === p.id) {
-                  await clearAudioFromDB(null);
+              let resp = await requestDelete(pinToSend);
+
+              // If protected with PIN (403), prompt user for PIN
+              if (resp.status === 403) {
+                let pinAttempt = await promptProjectPin(false, "Delete Song", "This song is PIN-protected. Enter PIN to delete.", "Delete Song");
+                resp = await requestDelete(pinAttempt);
+                while (resp.status === 403) {
+                  pinAttempt = await promptProjectPin(true, "Delete Song", "Incorrect PIN. Enter project PIN to delete.", "Delete Song");
+                  resp = await requestDelete(pinAttempt);
                 }
               }
-              sessionStorage.removeItem(`syncstage_tp_${p.id}`);
-            } catch (err) {}
 
-            if (State.projectId === p.id) {
-              sessionStorage.removeItem('syncstage_tp_root');
-              window.location.href = `/api/project/${p.id}/delete/`;
-            } else {
+              if (!resp.ok) {
+                showToast("Delete failed: unauthorized or error occurred.");
+                return;
+              }
+
+              // Clean up local IndexedDB & session storage
               try {
-                const resp = await fetch(`/api/project/${p.id}/delete/`, {
-                  method: 'POST',
-                  headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRFToken': getCookie('csrftoken') || ''
+                if (typeof clearAudioFromDB === 'function') {
+                  await clearAudioFromDB(p.id);
+                  if (State.projectId === p.id) {
+                    await clearAudioFromDB(null);
                   }
-                });
-                if (resp.ok) {
-                  row.remove();
-                  showToast(`Deleted "${p.title || 'Song'}"`);
-                } else {
-                  window.location.href = `/api/project/${p.id}/delete/`;
                 }
-              } catch (err) {
-                window.location.href = `/api/project/${p.id}/delete/`;
+                sessionStorage.removeItem(`syncstage_tp_${p.id}`);
+              } catch (err) {}
+
+              // If deleted project is currently open in studio, reset to clean slate
+              if (State.projectId === p.id) {
+                sessionStorage.removeItem('syncstage_tp_root');
+                const libModal = document.getElementById('project-library-modal');
+                if (libModal) libModal.classList.add('hidden');
+                if (typeof cleanSlateWorkspace === 'function') {
+                  await cleanSlateWorkspace();
+                } else {
+                  window.location.href = '/';
+                }
+              } else {
+                row.remove();
+                showToast(`Deleted "${p.title || 'Song'}"`);
+              }
+            } catch (err) {
+              if (err && err.message && err.message.includes("cancelled")) {
+                showToast("Delete cancelled");
+              } else if (err) {
+                console.error("Delete error:", err);
               }
             }
           };
@@ -1291,28 +1324,34 @@ function getCookie(name) {
  * Prompts the user with a sleek studio modal for the project PIN.
  * Returns a Promise that resolves with the entered PIN, or rejects if cancelled.
  */
-function promptProjectPin(showError = false) {
+function promptProjectPin(showError = false, submitLabel = "Unlock & Save", descText = "Enter the project PIN to authenticate and save changes.", titleText = "Project Protected") {
   return new Promise((resolve, reject) => {
     const modal = document.getElementById('pin-auth-modal');
     const input = document.getElementById('pin-auth-input');
     const submitBtn = document.getElementById('btn-pin-auth-submit');
     const cancelBtn = document.getElementById('btn-pin-auth-cancel');
     const errorEl = document.getElementById('pin-auth-error');
+    const submitLabelEl = document.getElementById('pin-auth-submit-label');
+    const descEl = document.getElementById('pin-auth-desc');
+    const titleEl = document.getElementById('pin-auth-title');
 
     if (!modal || !input) {
-      const fallback = prompt("🔒 Project is protected. Enter edit PIN:");
-      return fallback ? resolve(fallback) : reject(new Error("Canceled"));
+      const fallback = prompt(`🔒 ${titleText}. ${descText}:`);
+      return fallback ? resolve(fallback) : reject(new Error("PIN entry cancelled"));
     }
 
     if (errorEl) errorEl.classList.toggle('hidden', !showError);
+    if (titleEl) titleEl.textContent = titleText;
+    if (submitLabelEl) submitLabelEl.textContent = submitLabel;
+    if (descEl) descEl.textContent = descText;
     input.value = '';
     modal.classList.remove('hidden');
     setTimeout(() => input.focus(), 60);
 
     const cleanup = () => {
       modal.classList.add('hidden');
-      submitBtn.onclick = null;
-      cancelBtn.onclick = null;
+      if (submitBtn) submitBtn.onclick = null;
+      if (cancelBtn) cancelBtn.onclick = null;
       input.onkeydown = null;
     };
 
@@ -1331,8 +1370,8 @@ function promptProjectPin(showError = false) {
       reject(new Error("PIN entry cancelled"));
     };
 
-    submitBtn.onclick = handleConfirm;
-    cancelBtn.onclick = handleCancel;
+    if (submitBtn) submitBtn.onclick = handleConfirm;
+    if (cancelBtn) cancelBtn.onclick = handleCancel;
     input.onkeydown = (e) => {
       if (e.key === 'Enter') handleConfirm();
       if (e.key === 'Escape') handleCancel();
@@ -1346,7 +1385,8 @@ function saveProject() {
 
   const sortedSections = [...State.sections].sort((a, b) => a.startBar - b.startBar);
   const pinInput = document.getElementById('edit-song-pin');
-  const enteredNewPin = pinInput ? pinInput.value.trim() : null;
+  const isRemovingPin = pinInput && pinInput.dataset.removePin === "true";
+  const enteredNewPin = pinInput ? pinInput.value.trim() : "";
 
   const payload = {
     title: State.song.title,
@@ -1355,8 +1395,7 @@ function saveProject() {
     beatsPerBar: State.timingPoints[0]?.beatsPerBar || 4,
     timingPoints: State.timingPoints,
     totalMeasures: State.song.totalMeasures,
-    pin: currentProjectPin,
-    ...(enteredNewPin !== null && enteredNewPin !== "" ? { setPin: enteredNewPin } : {}),
+    pin: currentProjectPin || (enteredNewPin !== "" ? enteredNewPin : null),
     sections: sortedSections.map((s, idx) => {
       const nextSec = sortedSections[idx + 1];
       const endBar = nextSec ? Math.max(s.startBar, nextSec.startBar - 1) : State.song.totalMeasures;
@@ -1377,6 +1416,12 @@ function saveProject() {
       leadLine: m.leadLine || ""
     }))
   };
+
+  if (isRemovingPin) {
+    payload.setPin = "";
+  } else if (enteredNewPin !== "") {
+    payload.setPin = enteredNewPin;
+  }
 
   const endpoint = State.projectId 
     ? `/api/project/${State.projectId}/save/` 
@@ -1414,7 +1459,7 @@ function saveProject() {
   .then(async response => {
     if (response.status === 403) {
       try {
-        const pin = await promptProjectPin(currentProjectPin !== null);
+        const pin = await promptProjectPin(currentProjectPin !== null, "Unlock & Save", "Enter the project PIN to authenticate and save changes.", "Project Protected");
         currentProjectPin = pin;
         return saveProject();
       } catch (err) {
@@ -1450,7 +1495,35 @@ function saveProject() {
     if (typeof getProjectSnapshot === 'function') {
       lastSavedSnapshot = getProjectSnapshot();
     }
-    showToast("Project saved to Database!");
+
+    // Sync PIN & Lock state
+    State.isLocked = !!data.isLocked;
+    const pinInputEl = document.getElementById('edit-song-pin');
+    const btnClearPinEl = document.getElementById('btn-clear-pin');
+    if (isRemovingPin || !State.isLocked) {
+      currentProjectPin = null;
+      if (pinInputEl) {
+        delete pinInputEl.dataset.removePin;
+        pinInputEl.value = '';
+        pinInputEl.placeholder = 'Leave blank for none';
+      }
+      if (btnClearPinEl) btnClearPinEl.classList.add('hidden');
+    } else if (enteredNewPin !== "") {
+      currentProjectPin = enteredNewPin;
+      if (pinInputEl) {
+        delete pinInputEl.dataset.removePin;
+        pinInputEl.value = '';
+        pinInputEl.placeholder = '●●●● (Protected)';
+      }
+      if (btnClearPinEl) btnClearPinEl.classList.remove('hidden');
+    } else if (State.isLocked) {
+      if (pinInputEl) {
+        pinInputEl.placeholder = '●●●● (Protected)';
+      }
+      if (btnClearPinEl) btnClearPinEl.classList.remove('hidden');
+    }
+
+    showToast("Project saved to Database!" + (State.isLocked ? " 🔒" : ""));
     return data;
   })
   .catch(err => {
@@ -1655,10 +1728,32 @@ window.addEventListener('DOMContentLoaded', () => {
     Visualizer.init(canvasEl);
   }
 
-  // If the loaded project is protected, show a locked placeholder
+  // If the loaded project is protected, show a locked placeholder & clear button
   const pinInput = document.getElementById('edit-song-pin');
-  if (pinInput && State.isLocked) {
-    pinInput.placeholder = "●●●● (Protected)";
+  const btnClearPin = document.getElementById('btn-clear-pin');
+  if (pinInput) {
+    if (State.isLocked) {
+      pinInput.placeholder = "●●●● (Protected)";
+      if (btnClearPin) btnClearPin.classList.remove('hidden');
+    }
+    pinInput.addEventListener('input', () => {
+      delete pinInput.dataset.removePin;
+      if (State.isLocked && btnClearPin && pinInput.value.length === 0) {
+        btnClearPin.classList.remove('hidden');
+      }
+    });
+  }
+
+  if (btnClearPin) {
+    btnClearPin.onclick = () => {
+      if (pinInput) {
+        pinInput.value = '';
+        pinInput.dataset.removePin = 'true';
+        pinInput.placeholder = 'Will remove on Save';
+      }
+      btnClearPin.classList.add('hidden');
+      showToast("PIN protection will be removed when you Save.");
+    };
   }
 
   // Open Saved Songs Library Modal bindings
@@ -2389,7 +2484,13 @@ window.addEventListener('DOMContentLoaded', () => {
     if (totalMeasuresInput) totalMeasuresInput.value = State.song.totalMeasures;
 
     const pinInput = document.getElementById('edit-song-pin');
-    if (pinInput) pinInput.value = '';
+    if (pinInput) {
+      pinInput.value = '';
+      pinInput.placeholder = 'Leave blank for none';
+      delete pinInput.dataset.removePin;
+    }
+    const btnClearPin = document.getElementById('btn-clear-pin');
+    if (btnClearPin) btnClearPin.classList.add('hidden');
 
     const medleyToggle = document.getElementById('toggle-medley-mode');
     if (medleyToggle) medleyToggle.checked = false;
