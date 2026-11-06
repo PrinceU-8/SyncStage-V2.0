@@ -99,11 +99,20 @@ def studio_view(request, project_id=None):
 @csrf_exempt
 @require_POST
 def save_project_api(request, project_id=None):
-    """Saves or updates project state from client JSON with optional PIN enforcement."""
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    """Saves or updates project state from client JSON or FormData with optional audio upload."""
+    if request.FILES or 'project_data' in request.POST:
+        project_data_raw = request.POST.get('project_data', '{}')
+        try:
+            data = json.loads(project_data_raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({"error": "Invalid JSON in project_data"}, status=400)
+        uploaded_audio = request.FILES.get('audio_file')
+    else:
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+        uploaded_audio = None
 
     # 1. PIN verification for existing projects
     if project_id:
@@ -138,6 +147,9 @@ def save_project_api(request, project_id=None):
         # Optional: set, update, or remove PIN
         if "setPin" in data:
             project.edit_pin = str(data["setPin"]).strip() if data["setPin"] else None
+
+        if uploaded_audio:
+            project.audio_file = uploaded_audio
 
         project.save()
 
@@ -179,7 +191,29 @@ def save_project_api(request, project_id=None):
             )
         Measure.objects.bulk_create(measures_to_create)
 
-    return JsonResponse({"status": "saved", "projectId": project.id})
+    return JsonResponse({
+        "status": "saved",
+        "projectId": project.id,
+        "audioUrl": project.audio_file.url if project.audio_file else None
+    })
+
+
+@csrf_exempt
+@require_POST
+def upload_audio_api(request, project_id):
+    """Uploads and associates an audio track with an existing project."""
+    project = get_object_or_404(SongProject, id=project_id)
+    audio_file = request.FILES.get('audio_file')
+    if not audio_file:
+        return JsonResponse({"error": "No audio file provided"}, status=400)
+
+    project.audio_file = audio_file
+    project.save(update_fields=['audio_file', 'updated_at'])
+    return JsonResponse({
+        "status": "uploaded",
+        "projectId": project.id,
+        "audioUrl": project.audio_file.url if project.audio_file else None
+    })
 
 
 @require_GET
