@@ -2,17 +2,24 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # API Endpoints
+    path('api/projects/', views.api_list_projects, name='api_list_projects'),
+    path('api/project/save/', views.save_project_api, name='api_save_new'),
+
+    path('api/project/<int:project_id>/delete/', views.delete_project_api, name='api_delete_project'),
+    path('api/project/<str:slug>/delete/', views.delete_project_api, name='api_delete_project_slug'),
+
+    path('api/project/<int:project_id>/save/', views.save_project_api, name='api_save_existing'),
+    path('api/project/<str:slug>/save/', views.save_project_api, name='api_save_existing_slug'),
+
+    path('api/project/<int:project_id>/upload-audio/', views.upload_audio_api, name='api_upload_audio'),
+    path('api/project/<str:slug>/upload-audio/', views.upload_audio_api, name='api_upload_audio_slug'),
+
+    path('api/project/<int:project_id>/', views.load_project_api, name='api_load_project'),
+    path('api/project/<str:slug>/', views.load_project_api, name='api_load_project_slug'),
+
     # UI Views
     path('', views.studio_view, name='studio'),
     path('<int:project_id>/', views.studio_view, name='studio_project'),
-
-    # API Endpoints
-    path('api/project/<int:project_id>/delete/', views.delete_project_api, name='api_delete_project'),
-    path('api/projects/', views.api_list_projects, name='api_list_projects'),
-    path('api/project/save/', views.save_project_api, name='api_save_new'),
-    path('api/project/<int:project_id>/', views.load_project_api, name='api_load_project'),
-    path('api/project/<int:project_id>/save/', views.save_project_api, name='api_save_existing'),
-    path('api/project/<int:project_id>/upload-audio/', views.upload_audio_api, name='api_upload_audio'),
-
-    path('<int:project_id>/', views.studio_view, name='studio_project'),
+    path('<str:slug>/', views.studio_view, name='studio_slug'),
 ]

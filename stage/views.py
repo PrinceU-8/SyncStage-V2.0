@@ -7,10 +7,26 @@ from django.db import transaction
 from .models import SongProject, Section, Measure
 
 
+def get_project_by_identifier(identifier):
+    """Retrieves a SongProject by integer ID or string slug."""
+    if identifier is None:
+        return None
+    if str(identifier).isdigit():
+        return get_object_or_404(SongProject, id=int(identifier))
+    return get_object_or_404(SongProject, slug=identifier)
+
+
 @ensure_csrf_cookie
-def studio_view(request, project_id=None):
-    if project_id:
-        project = get_object_or_404(SongProject, id=project_id)
+def studio_view(request, project_id=None, slug=None):
+    identifier = project_id if project_id is not None else slug
+    if identifier:
+        if str(identifier).isdigit():
+            project = get_object_or_404(SongProject, id=int(identifier))
+            if project.slug:
+                return redirect('studio_slug', slug=project.slug)
+        else:
+            project = get_object_or_404(SongProject, slug=identifier)
+
         sections = [
             {
                 "id": s.id,
@@ -41,6 +57,8 @@ def studio_view(request, project_id=None):
         ]
         initial_data = {
             "projectId": project.id,
+            "projectSlug": project.slug,
+            "slug": project.slug,
             "title": project.title,
             "key": project.default_key,
             "bpm": project.bpm,
@@ -60,6 +78,8 @@ def studio_view(request, project_id=None):
         default_bars = 8
         initial_data = {
             "projectId": None,
+            "projectSlug": None,
+            "slug": None,
             "title": "UNTITLED PROJECT",
             "key": "C",
             "bpm": 120.0,
@@ -98,8 +118,9 @@ def studio_view(request, project_id=None):
 
 @csrf_exempt
 @require_POST
-def save_project_api(request, project_id=None):
+def save_project_api(request, project_id=None, slug=None):
     """Saves or updates project state from client JSON or FormData with optional audio upload."""
+    identifier = project_id if project_id is not None else slug
     if request.FILES or 'project_data' in request.POST:
         project_data_raw = request.POST.get('project_data', '{}')
         try:
@@ -115,21 +136,26 @@ def save_project_api(request, project_id=None):
         uploaded_audio = None
 
     # 1. PIN verification for existing projects
-    if project_id:
-        project = get_object_or_404(SongProject, id=project_id)
-        provided_pin = data.get("pin")
+    if identifier:
+        project = get_project_by_identifier(identifier)
+        provided_pin = data.get("pin") or data.get("setPin")
         
         # If the project has an edit_pin set and provided pin doesn't match
-        if project.edit_pin and project.edit_pin != provided_pin:
-            return JsonResponse({
-                "status": "locked",
-                "error": "This song is protected. Incorrect edit PIN."
-            }, status=403)
+        if project.edit_pin:
+            if not provided_pin or str(project.edit_pin).strip() != str(provided_pin).strip():
+                return JsonResponse({
+                    "status": "locked",
+                    "error": "This song is protected. Incorrect edit PIN."
+                }, status=403)
     else:
         project = SongProject()
 
     with transaction.atomic():
-        project.title = data.get("title", getattr(project, "title", "UNTITLED PROJECT")).upper()
+        new_title = data.get("title", getattr(project, "title", "UNTITLED PROJECT")).strip().upper()
+        if not project.slug or (project.title and project.title.upper() != new_title):
+            from .models import generate_unique_slug
+            project.slug = generate_unique_slug(new_title, project.id)
+        project.title = new_title
         project.default_key = data.get("key", getattr(project, "default_key", "C")).upper()
         project.total_measures = int(data.get("totalMeasures", getattr(project, "total_measures", 8)))
 
@@ -194,15 +220,19 @@ def save_project_api(request, project_id=None):
     return JsonResponse({
         "status": "saved",
         "projectId": project.id,
+        "slug": project.slug,
+        "projectSlug": project.slug,
+        "isLocked": bool(project.edit_pin),
         "audioUrl": project.audio_file.url if project.audio_file else None
     })
 
 
 @csrf_exempt
 @require_POST
-def upload_audio_api(request, project_id):
+def upload_audio_api(request, project_id=None, slug=None):
     """Uploads and associates an audio track with an existing project."""
-    project = get_object_or_404(SongProject, id=project_id)
+    identifier = project_id if project_id is not None else slug
+    project = get_project_by_identifier(identifier)
     audio_file = request.FILES.get('audio_file')
     if not audio_file:
         return JsonResponse({"error": "No audio file provided"}, status=400)
@@ -212,14 +242,17 @@ def upload_audio_api(request, project_id):
     return JsonResponse({
         "status": "uploaded",
         "projectId": project.id,
+        "slug": project.slug,
+        "projectSlug": project.slug,
         "audioUrl": project.audio_file.url if project.audio_file else None
     })
 
 
 @require_GET
-def load_project_api(request, project_id):
+def load_project_api(request, project_id=None, slug=None):
     """Returns project metadata, sections, and measures as JSON."""
-    project = get_object_or_404(SongProject, id=project_id)
+    identifier = project_id if project_id is not None else slug
+    project = get_project_by_identifier(identifier)
     
     sections_data = [
         {
@@ -256,6 +289,8 @@ def load_project_api(request, project_id):
         "status": "ok",
         "project": {
             "id": project.id,
+            "slug": project.slug,
+            "projectSlug": project.slug,
             "title": project.title,
             "key": project.default_key,
             "bpm": project.bpm,
@@ -276,23 +311,67 @@ def api_list_projects(request):
     projects = (
         SongProject.objects.all()
         .order_by('-updated_at')
-        .values('id', 'title', 'default_key', 'bpm', 'total_measures', 'updated_at')
+        .values('id', 'slug', 'title', 'default_key', 'bpm', 'total_measures', 'edit_pin', 'updated_at')
     )
-    return JsonResponse({"projects": list(projects)})
+    result = [
+        {
+            'id': p['id'],
+            'slug': p['slug'],
+            'title': p['title'],
+            'default_key': p['default_key'],
+            'bpm': p['bpm'],
+            'total_measures': p['total_measures'],
+            'isProtected': bool(p['edit_pin']),
+            'updated_at': p['updated_at']
+        }
+        for p in projects
+    ]
+    return JsonResponse({"projects": result})
 
 
 @csrf_exempt
-def delete_project_api(request, project_id):
-    """Deletes a song project. Returns JSON if requested via AJAX/fetch, otherwise redirects to /"""
+def delete_project_api(request, project_id=None, slug=None):
+    """Deletes a song project. Enforces PIN protection unless caller has admin-level permission."""
+    identifier = project_id if project_id is not None else slug
+    if str(identifier).isdigit():
+        project = SongProject.objects.filter(id=int(identifier)).first()
+    else:
+        project = SongProject.objects.filter(slug=identifier).first()
+
+    if not project:
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('accept', ''):
+            return JsonResponse({"status": "deleted", "projectId": identifier})
+        return redirect('/')
+
+    # If project is PIN protected, verify PIN
+    if project.edit_pin:
+        provided_pin = None
+        if request.body:
+            try:
+                body_data = json.loads(request.body.decode('utf-8'))
+                if isinstance(body_data, dict):
+                    provided_pin = body_data.get('pin')
+            except Exception:
+                pass
+        if not provided_pin:
+            provided_pin = request.POST.get('pin') or request.GET.get('pin') or request.headers.get('x-project-pin')
+
+        if not provided_pin or str(project.edit_pin).strip() != str(provided_pin).strip():
+            return JsonResponse({
+                "status": "locked",
+                "error": "This song is protected. Incorrect edit PIN."
+            }, status=403)
+
     try:
-        project = SongProject.objects.filter(id=project_id).first()
-        if project:
-            project.delete()
+        if project.audio_file:
+            project.audio_file.delete(save=False)
+        project.delete()
     except Exception as e:
         print("Delete error:", e)
+        return JsonResponse({"error": str(e)}, status=500)
 
     if request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('accept', ''):
-        return JsonResponse({"status": "deleted", "projectId": project_id})
+        return JsonResponse({"status": "deleted", "projectId": identifier})
 
     # Standard browser click on an <a> tag will redirect right to /
     return redirect('/')
