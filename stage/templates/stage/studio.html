@@ -365,7 +365,10 @@
           </div>
 
           <div>
-            <label class="text-[10px] font-mono text-zinc-400">Default Title & Artist</label>
+            <div class="flex items-center justify-between mb-0.5">
+              <label class="text-[10px] font-mono text-zinc-400">Default Title & Artist</label>
+              <span id="project-url-preview" class="text-[10px] font-mono text-amber-400/90 font-semibold truncate max-w-[200px]" title="Project URL">{% if initial_project_data.slug %}/{{ initial_project_data.slug }}/{% endif %}</span>
+            </div>
             <input type="text" id="edit-song-title" value="{{ initial_project_data.title|default:"UNTITLED PROJECT" }}" class="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white uppercase font-mono">
           </div>
 

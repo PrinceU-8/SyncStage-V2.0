@@ -26,6 +26,7 @@ try {
 
 const State = {
   projectId: backendData.projectId || null,
+  projectSlug: backendData.slug || backendData.projectSlug || null,
   isLocked: !!backendData.isLocked,
   song: {
     title: backendData.title || "UNTITLED PROJECT",
@@ -84,6 +85,13 @@ while (State.measures.length < State.song.totalMeasures) {
    ========================================================================= */
 let lastSavedSnapshot = null;
 let currentAudioFile = null;
+
+function updateUrlPreview(slug) {
+  const preview = document.getElementById('project-url-preview');
+  if (preview) {
+    preview.textContent = slug ? `/${slug}/` : '';
+  }
+}
 
 function getProjectSnapshot() {
   return JSON.stringify({
@@ -1192,6 +1200,7 @@ function openSongLibrary() {
               Key: <span class="text-amber-300 font-bold">${p.default_key}</span> • 
               <span>${Math.round(p.bpm)} BPM</span> • 
               <span>${p.total_measures} Bars</span>
+              ${p.slug ? ` • <span class="text-amber-400/80 font-mono">/${p.slug}/</span>` : ''}
             </div>
           </div>
 
@@ -1206,7 +1215,8 @@ function openSongLibrary() {
         `;
 
         const loadSong = () => {
-          window.location.href = `/${p.id}/`;
+          const targetUrl = p.slug ? `/${p.slug}/` : `/${p.id}/`;
+          window.location.href = targetUrl;
         };
         row.querySelector('[data-action="load"]').onclick = loadSong;
         row.querySelector('.btn-load-song').onclick = loadSong;
@@ -1420,10 +1430,15 @@ function saveProject() {
     if (!data) return null;
     if (data.projectId) {
       State.projectId = data.projectId;
+      if (data.slug || data.projectSlug) {
+        State.projectSlug = data.slug || data.projectSlug;
+      }
       try {
         sessionStorage.setItem(`syncstage_tp_${data.projectId}`, JSON.stringify(State.timingPoints));
       } catch (e) {}
-      window.history.replaceState({}, '', `/${data.projectId}/`);
+      const targetSlug = State.projectSlug || data.projectId;
+      window.history.replaceState({}, '', `/${targetSlug}/`);
+      updateUrlPreview(State.projectSlug);
     }
     if (data.audioUrl) {
       backendData.audioUrl = data.audioUrl;
@@ -2306,8 +2321,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // 3. Reset project ID to null (clean root studio, NOT deleting project from DB!)
     State.projectId = null;
+    State.projectSlug = null;
     State.isLocked = false;
     currentProjectPin = null;
+    updateUrlPreview(null);
 
     // 4. Wipe temporary session storage & root audio cache
     try {

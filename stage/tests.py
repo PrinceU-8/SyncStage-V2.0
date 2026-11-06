@@ -47,10 +47,14 @@ class SyncStageTests(TestCase):
         self.assertEqual(len(project.timing_points), 2)
         self.assertEqual(project.timing_points[0]['offset'], 0.852)
 
-        # 3. Check studio_view returns exact timing points (prevents desync on refresh)
-        view_resp = self.client.get(reverse('studio_project', kwargs={'project_id': project_id}))
+        # 3. Check studio_view redirects legacy ID to slug, and slug renders exact timing points
+        view_resp = self.client.get(reverse('studio_project', kwargs={'project_id': project_id}), follow=True)
         self.assertEqual(view_resp.status_code, 200)
         self.assertContains(view_resp, '0.852')
+
+        slug_resp = self.client.get(reverse('studio_slug', kwargs={'slug': project.slug}))
+        self.assertEqual(slug_resp.status_code, 200)
+        self.assertContains(slug_resp, '0.852')
 
         # 4. Check load_project_api returns timing points
         api_load_resp = self.client.get(reverse('api_load_project', kwargs={'project_id': project_id}))
@@ -120,9 +124,13 @@ class SyncStageTests(TestCase):
         self.assertIn('track', project.audio_file.name)
 
         # Check studio view exposes audioUrl in initial_project_data
-        view_resp = self.client.get(reverse('studio_project', kwargs={'project_id': project_id}))
+        view_resp = self.client.get(reverse('studio_project', kwargs={'project_id': project_id}), follow=True)
         self.assertEqual(view_resp.status_code, 200)
         self.assertContains(view_resp, project.audio_file.url)
+
+        slug_resp = self.client.get(reverse('studio_slug', kwargs={'slug': project.slug}))
+        self.assertEqual(slug_resp.status_code, 200)
+        self.assertContains(slug_resp, project.audio_file.url)
 
         # Check load API returns audioUrl
         load_resp = self.client.get(reverse('api_load_project', kwargs={'project_id': project_id}))
@@ -153,3 +161,39 @@ class SyncStageTests(TestCase):
         # Clean up
         if project.audio_file:
             project.audio_file.delete(save=False)
+
+    def test_slug_generation_and_redirect(self):
+        # 1. Create a project
+        p1 = SongProject.objects.create(title="My Awesome Song", bpm=120)
+        self.assertEqual(p1.slug, "my-awesome-song")
+
+        # 2. Accessing by numeric ID redirects (302) to slug URL
+        id_resp = self.client.get(f"/{p1.id}/")
+        self.assertEqual(id_resp.status_code, 302)
+        self.assertEqual(id_resp.url, f"/{p1.slug}/")
+
+        # 3. Accessing by slug URL renders directly (200)
+        slug_resp = self.client.get(f"/{p1.slug}/")
+        self.assertEqual(slug_resp.status_code, 200)
+        self.assertContains(slug_resp, "My Awesome Song")
+        self.assertContains(slug_resp, '"projectSlug": "my-awesome-song"')
+
+        # 4. Duplicate title generates unique suffix
+        p2 = SongProject.objects.create(title="My Awesome Song", bpm=120)
+        self.assertEqual(p2.slug, "my-awesome-song-2")
+
+        # 5. Purely numeric titles get prefixed with 'song-'
+        p3 = SongProject.objects.create(title="1999", bpm=120)
+        self.assertEqual(p3.slug, "song-1999")
+
+        # 6. Renaming updates slug via save API
+        save_resp = self.client.post(
+            reverse('api_save_existing_slug', kwargs={'slug': p1.slug}),
+            data=json.dumps({"title": "Renamed Track", "totalMeasures": 8}),
+            content_type='application/json'
+        )
+        self.assertEqual(save_resp.status_code, 200)
+        resp_json = save_resp.json()
+        self.assertEqual(resp_json['slug'], 'renamed-track')
+        p1.refresh_from_db()
+        self.assertEqual(p1.slug, 'renamed-track')
